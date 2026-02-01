@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import React, { useId, useRef } from "react";
 import { useLocale } from "react-aria";
-import type { FieldValues } from "react-hook-form";
+import type { FieldPath, FieldValues } from "react-hook-form";
 import { useForm } from "react-hook-form";
 import type z from "zod";
 import { Button } from "@/components/ui/button";
@@ -50,6 +50,7 @@ import { Banner } from "@/plugins/impl/common/error-banner";
 import { THEMES } from "@/theme/useTheme";
 import { arrayToggle } from "@/utils/arrays";
 import { cn } from "@/utils/cn";
+import { autoPopulateModels } from "../ai/ai-utils";
 import { keyboardShortcutsAtom } from "../editor/controls/keyboard-shortcuts";
 import { Badge } from "../ui/badge";
 import { ExternalLink } from "../ui/links";
@@ -93,6 +94,68 @@ export function getDirtyValues<T extends FieldValues>(
   }
   return result;
 }
+
+type ManualInjector = (
+  values: UserConfig,
+  dirtyValues: Partial<UserConfig>,
+) => void;
+
+const modelsAiInjection = (
+  values: UserConfig,
+  dirtyValues: Partial<UserConfig>,
+) => {
+  dirtyValues.ai = {
+    ...dirtyValues.ai,
+    models: {
+      ...dirtyValues.ai?.models,
+      displayed_models: values.ai?.models?.displayed_models ?? [],
+      custom_models: values.ai?.models?.custom_models ?? [],
+    },
+  };
+};
+
+// Some fields (like AI model lists) have empty arrays as default values.
+// If a user explicitly clears them, RHF won't mark them dirty, so we use
+// touchedFields to force-include those values in the payload.
+const MANUAL_INJECT_ENTRIES = [
+  ["ai.models.displayed_models", modelsAiInjection],
+  ["ai.models.custom_models", modelsAiInjection],
+] as const satisfies readonly (readonly [
+  FieldPath<UserConfig>,
+  ManualInjector,
+])[];
+
+const MANUAL_INJECT_FIELDS = new Map(MANUAL_INJECT_ENTRIES);
+
+const isTouchedPath = (
+  touched: unknown,
+  path: FieldPath<UserConfig>,
+): boolean => {
+  if (!touched) {
+    return false;
+  }
+  let current: unknown = touched;
+  for (const segment of path.split(".")) {
+    if (typeof current !== "object" || current === null) {
+      return false;
+    }
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current === true;
+};
+
+export const applyManualInjections = (opts: {
+  values: UserConfig;
+  dirtyValues: Partial<UserConfig>;
+  touchedFields: unknown;
+}) => {
+  const { values, dirtyValues, touchedFields } = opts;
+  for (const [fieldPath, injector] of MANUAL_INJECT_FIELDS) {
+    if (isTouchedPath(touchedFields, fieldPath)) {
+      injector(values, dirtyValues);
+    }
+  }
+};
 
 const categories = [
   {
@@ -180,13 +243,49 @@ export const UserConfigForm: React.FC = () => {
     defaultValues: config,
   });
 
+  const setAiModels = (
+    values: UserConfig["ai"],
+    dirtyAiConfig: UserConfig["ai"],
+  ) => {
+    const { chatModel, editModel } = autoPopulateModels(values);
+    if (chatModel || editModel) {
+      dirtyAiConfig = {
+        ...dirtyAiConfig,
+        models: {
+          ...dirtyAiConfig?.models,
+          ...(chatModel && { chat_model: chatModel }),
+          ...(editModel && { edit_model: editModel }),
+        },
+      } as typeof dirtyAiConfig;
+      if (chatModel) {
+        form.setValue("ai.models.chat_model", chatModel);
+      }
+      if (editModel) {
+        form.setValue("ai.models.edit_model", editModel);
+      }
+    }
+
+    return dirtyAiConfig;
+  };
+
   const onSubmitNotDebounced = async (values: UserConfig) => {
     // Only send values that were actually changed to avoid
     // overwriting backend values the form doesn't manage
     const dirtyValues = getDirtyValues(values, form.formState.dirtyFields);
+    applyManualInjections({
+      values,
+      dirtyValues,
+      touchedFields: form.formState.touchedFields,
+    });
     if (Object.keys(dirtyValues).length === 0) {
       return; // Nothing changed
     }
+
+    // Auto-populate AI models when credentials are set, makes it easier to get started
+    if (dirtyValues.ai) {
+      dirtyValues.ai = setAiModels(values.ai, dirtyValues.ai);
+    }
+
     await saveUserConfig({ config: dirtyValues }).then(() => {
       // Update local state with form values
       setConfig((prev) => ({ ...prev, ...values }));

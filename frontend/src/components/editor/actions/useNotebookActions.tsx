@@ -70,6 +70,7 @@ import { createShareableLink } from "@/core/wasm/share";
 import { isWasm } from "@/core/wasm/utils";
 import { copyToClipboard } from "@/utils/copy";
 import {
+  ADD_PRINTING_CLASS,
   downloadAsPDF,
   downloadBlob,
   downloadHTMLAsImage,
@@ -77,6 +78,7 @@ import {
 } from "@/utils/download";
 import { Filenames } from "@/utils/filenames";
 import { Objects } from "@/utils/objects";
+import type { ProgressState } from "@/utils/progress";
 import { newNotebookURL } from "@/utils/urls";
 import { useRunAllCells } from "../cell/useRunCells";
 import { useChromeActions, useChromeState } from "../chrome/state";
@@ -133,6 +135,12 @@ export function useNotebookActions() {
   // Fallback: if sharing is undefined, both are enabled by default
   const sharingHtmlEnabled = resolvedConfig.sharing?.html ?? true;
   const sharingWasmEnabled = resolvedConfig.sharing?.wasm ?? true;
+
+  const isServerSidePdfExportEnabled = getFeatureFlag("server_side_pdf_export");
+  // With server side pdf export, it doesn't matter what mode we are in,
+  // Default export uses browser print, which is better in present mode
+  const pdfDownloadEnabled =
+    isServerSidePdfExportEnabled || viewState.mode === "present";
 
   const renderCheckboxElement = (checked: boolean) => (
     <div className="w-8 flex justify-end">
@@ -209,32 +217,36 @@ export function useNotebookActions() {
             if (!app) {
               return;
             }
-            await downloadHTMLAsImage(app, document.title);
+            await downloadHTMLAsImage({
+              element: app,
+              filename: document.title,
+              // Add body.printing ONLY when converting the whole notebook to a screenshot
+              prepare: ADD_PRINTING_CLASS,
+            });
           },
         },
         {
           icon: <FileIcon size={14} strokeWidth={1.5} />,
           label: "Download as PDF",
-          disabled: viewState.mode !== "present",
-          tooltip:
-            viewState.mode === "present" ? undefined : (
-              <span>
-                Only available in app view. <br />
-                Toggle with: {renderShortcut("global.hideCode", false)}
-              </span>
-            ),
+          disabled: !pdfDownloadEnabled,
+          tooltip: pdfDownloadEnabled ? undefined : (
+            <span>
+              Only available in app view. <br />
+              Toggle with: {renderShortcut("global.hideCode", false)}
+            </span>
+          ),
           handle: async () => {
-            if (getFeatureFlag("server_side_pdf_export")) {
+            if (isServerSidePdfExportEnabled) {
               if (!filename) {
                 toastNotebookMustBeNamed();
                 return;
               }
 
-              const downloadPDF = async () => {
-                await updateCellOutputsWithScreenshots(
-                  takeScreenshots,
+              const downloadPDF = async (progress: ProgressState) => {
+                await updateCellOutputsWithScreenshots({
+                  takeScreenshots: () => takeScreenshots({ progress }),
                   updateCellOutputs,
-                );
+                });
                 await downloadAsPDF({
                   filename: filename,
                   webpdf: false,

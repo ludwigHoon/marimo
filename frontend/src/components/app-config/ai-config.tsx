@@ -1,5 +1,6 @@
 /* Copyright 2026 Marimo. All rights reserved. */
 
+import { useAtom } from "jotai";
 import {
   BotIcon,
   BrainIcon,
@@ -79,6 +80,7 @@ import { AWS_REGIONS } from "./constants";
 import { IncorrectModelId } from "./incorrect-model-id";
 import { IsOverridden } from "./is-overridden";
 import { MCPConfig } from "./mcp-config";
+import { aiSettingsSubTabAtom } from "./state";
 
 interface AiConfigProps {
   form: UseFormReturn<UserConfig>;
@@ -115,6 +117,7 @@ interface ApiKeyProps {
   placeholder: string;
   testId: string;
   description?: React.ReactNode;
+  onChange?: (value: string) => void;
 }
 
 export const ApiKey: React.FC<ApiKeyProps> = ({
@@ -124,6 +127,7 @@ export const ApiKey: React.FC<ApiKeyProps> = ({
   placeholder,
   testId,
   description,
+  onChange,
 }) => {
   return (
     <FormField
@@ -141,11 +145,12 @@ export const ApiKey: React.FC<ApiKeyProps> = ({
                 placeholder={placeholder}
                 type="password"
                 {...field}
-                value={asStringOrUndefined(field.value)}
+                value={asStringOrEmpty(field.value)}
                 onChange={(e) => {
                   const value = e.target.value;
                   if (!value.includes("*")) {
                     field.onChange(value);
+                    onChange?.(value);
                   }
                 }}
               />
@@ -168,12 +173,12 @@ interface BaseUrlProps {
   testId: string;
   description?: React.ReactNode;
   disabled?: boolean;
-  defaultValue?: string;
+  onChange?: (value: string) => void;
 }
 
-function asStringOrUndefined<T>(value: T): string | undefined {
+function asStringOrEmpty<T>(value: T): string {
   if (value == null) {
-    return undefined;
+    return "";
   }
 
   if (typeof value === "string") {
@@ -191,13 +196,12 @@ export const BaseUrl: React.FC<BaseUrlProps> = ({
   testId,
   description,
   disabled = false,
-  defaultValue,
+  onChange,
 }) => {
   return (
     <FormField
       control={form.control}
       name={name}
-      disabled={disabled}
       render={({ field }) => (
         <div className="flex flex-col space-y-1">
           <FormItem className={formItemClasses}>
@@ -208,9 +212,13 @@ export const BaseUrl: React.FC<BaseUrlProps> = ({
                 rootClassName="flex-1"
                 className="m-0 inline-flex h-7"
                 placeholder={placeholder}
-                defaultValue={defaultValue}
                 {...field}
-                value={asStringOrUndefined(field.value)}
+                value={asStringOrEmpty(field.value)}
+                disabled={disabled}
+                onChange={(e) => {
+                  field.onChange(e.target.value);
+                  onChange?.(e.target.value);
+                }}
               />
             </FormControl>
             <FormMessage />
@@ -228,9 +236,7 @@ interface ModelSelectorProps {
   config: UserConfig;
   name: FieldPath<UserConfig>;
   placeholder: string;
-  testId: string;
   description?: React.ReactNode;
-  disabled?: boolean;
   label: string;
   forRole: SupportedRole;
   onSubmit: (values: UserConfig) => void;
@@ -241,9 +247,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   config,
   name,
   placeholder,
-  testId,
   description,
-  disabled = false,
   label,
   forRole,
   onSubmit,
@@ -252,9 +256,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     <FormField
       control={form.control}
       name={name}
-      disabled={disabled}
       render={({ field }) => {
-        const value = asStringOrUndefined(field.value);
+        const value = asStringOrEmpty(field.value);
 
         const selectModel = (modelId: QualifiedModelId) => {
           field.onChange(modelId);
@@ -282,11 +285,10 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                     </p>
                     <div className="px-2 py-1">
                       <Input
-                        data-testid={testId}
                         className="w-full border-border shadow-none focus-visible:shadow-xs"
                         placeholder={placeholder}
                         {...field}
-                        value={asStringOrUndefined(field.value)}
+                        value={asStringOrEmpty(field.value)}
                         onKeyDown={Events.stopPropagation()}
                       />
                       {value && (
@@ -339,7 +341,6 @@ export const ProviderSelect: React.FC<ProviderSelectProps> = ({
     <FormField
       control={form.control}
       name={name}
-      disabled={disabled}
       render={({ field }) => (
         <div className="flex flex-col space-y-1">
           <FormItem className={formItemClasses}>
@@ -354,14 +355,14 @@ export const ProviderSelect: React.FC<ProviderSelectProps> = ({
                     field.onChange(e.target.value);
                   }
                 }}
-                value={asStringOrUndefined(
+                value={asStringOrEmpty(
                   field.value === true
                     ? "github"
                     : field.value === false
                       ? "none"
                       : field.value,
                 )}
-                disabled={field.disabled}
+                disabled={disabled}
                 className="inline-flex mr-2"
               >
                 {options.map((option) => (
@@ -427,7 +428,6 @@ const renderCopilotProvider = ({
         config={config}
         name="ai.models.autocomplete_model"
         placeholder="ollama/qwen2.5-coder:1.5b"
-        testId="custom-model-input"
         description="Model to use for code completion when using a custom provider."
         onSubmit={onSubmit}
         forRole="autocomplete"
@@ -715,6 +715,22 @@ export const CustomProvidersConfig: React.FC<AiConfigProps> = ({
           </div>
         );
 
+        // Update a provider field by updating the entire custom_providers object.
+        // As this config will be replaced, it needs to be sent in its entirety.
+        const updateProviderField = (opts: {
+          providerName: string;
+          fieldName: keyof CustomProviderConfig;
+          value: string;
+        }) => {
+          field.onChange({
+            ...customProviders,
+            [opts.providerName]: {
+              ...customProviders[opts.providerName],
+              [opts.fieldName]: opts.value || undefined,
+            },
+          });
+        };
+
         const renderAccordionItem = ({
           providerName,
           providerConfig,
@@ -744,6 +760,13 @@ export const CustomProvidersConfig: React.FC<AiConfigProps> = ({
                 }
                 placeholder="sk-..."
                 testId={`custom-provider-${providerName}-api-key`}
+                onChange={(value) =>
+                  updateProviderField({
+                    providerName,
+                    fieldName: "api_key",
+                    value,
+                  })
+                }
               />
               <BaseUrl
                 form={form}
@@ -753,6 +776,13 @@ export const CustomProvidersConfig: React.FC<AiConfigProps> = ({
                 }
                 placeholder="https://api.example.com/v1"
                 testId={`custom-provider-${providerName}-base-url`}
+                onChange={(value) =>
+                  updateProviderField({
+                    providerName,
+                    fieldName: "base_url",
+                    value,
+                  })
+                }
               />
               <Button
                 variant="destructive"
@@ -918,7 +948,6 @@ export const AiProvidersConfig: React.FC<AiConfigProps> = ({
             config={config}
             name="ai.ollama.base_url"
             placeholder="http://localhost:11434/v1"
-            defaultValue="http://localhost:11434/v1"
             testId="ollama-base-url-input"
           />
         </AccordionFormItem>
@@ -1038,7 +1067,6 @@ export const AiProvidersConfig: React.FC<AiConfigProps> = ({
             config={config}
             name="ai.azure.base_url"
             placeholder="https://<your-resource-name>.openai.azure.com/openai/deployments/<deployment-name>?api-version=<api-version>"
-            defaultValue="https://<your-resource-name>.openai.azure.com/openai/deployments/<deployment-name>?api-version=<api-version>"
             testId="ai-azure-base-url-input"
           />
         </AccordionFormItem>
@@ -1176,8 +1204,6 @@ export const AiAssistConfig: React.FC<AiConfigProps> = ({
   config,
   onSubmit,
 }) => {
-  const isWasmRuntime = isWasm();
-
   return (
     <SettingGroup>
       <SettingSubtitle>AI Assistant</SettingSubtitle>
@@ -1211,8 +1237,6 @@ export const AiAssistConfig: React.FC<AiConfigProps> = ({
         config={config}
         name="ai.models.chat_model"
         placeholder={DEFAULT_AI_MODEL}
-        testId="ai-chat-model-input"
-        disabled={isWasmRuntime}
         description={
           <span>Model to use for chat conversations in the Chat panel.</span>
         }
@@ -1225,8 +1249,6 @@ export const AiAssistConfig: React.FC<AiConfigProps> = ({
         config={config}
         name="ai.models.edit_model"
         placeholder={DEFAULT_AI_MODEL}
-        testId="ai-edit-model-input"
-        disabled={isWasmRuntime}
         description={
           <span>
             Model to use for code editing with the{" "}
@@ -1236,18 +1258,6 @@ export const AiAssistConfig: React.FC<AiConfigProps> = ({
         forRole="edit"
         onSubmit={onSubmit}
       />
-
-      <ul className="bg-muted p-2 rounded-md list-disc space-y-1 pl-6">
-        <li className="text-xs text-muted-secondary">
-          Models should include the provider name and model name separated by a
-          slash. For example, "anthropic/claude-3-5-sonnet-latest" or
-          "google/gemini-2.0-flash-exp"
-        </li>
-        <li className="text-xs text-muted-secondary">
-          Depending on the provider, we will use the respective API key and
-          additional configuration.
-        </li>
-      </ul>
 
       <FormField
         control={form.control}
@@ -1401,6 +1411,7 @@ export const AiModelDisplayConfig: React.FC<AiConfigProps> = ({
 
     form.setValue("ai.models.displayed_models", newModels, {
       shouldDirty: true,
+      shouldTouch: true,
     });
     onSubmit(form.getValues());
   });
@@ -1420,6 +1431,7 @@ export const AiModelDisplayConfig: React.FC<AiConfigProps> = ({
 
       form.setValue("ai.models.displayed_models", newModels, {
         shouldDirty: true,
+        shouldTouch: true,
       });
       onSubmit(form.getValues());
     },
@@ -1427,8 +1439,17 @@ export const AiModelDisplayConfig: React.FC<AiConfigProps> = ({
 
   const deleteModel = useEvent((modelId: QualifiedModelId) => {
     const newModels = customModels.filter((id) => id !== modelId);
+    // Remove from displayed models if it's in there
+    const newDisplayedModels = currentDisplayedModels.filter(
+      (id) => id !== modelId,
+    );
+    form.setValue("ai.models.displayed_models", newDisplayedModels, {
+      shouldDirty: true,
+      shouldTouch: true,
+    });
     form.setValue("ai.models.custom_models", newModels, {
       shouldDirty: true,
+      shouldTouch: true,
     });
     onSubmit(form.getValues());
   });
@@ -1508,6 +1529,7 @@ export const AddModelForm: React.FC<{
 
     form.setValue("ai.models.custom_models", [newModel.id, ...customModels], {
       shouldDirty: true,
+      shouldTouch: true,
     });
     onSubmit(form.getValues());
     resetForm();
@@ -1700,6 +1722,12 @@ const AddButton = ({
   );
 };
 
+export type AiSettingsSubTab =
+  | "ai-features"
+  | "ai-providers"
+  | "ai-models"
+  | "mcp";
+
 export const AiConfig: React.FC<AiConfigProps> = ({
   form,
   config,
@@ -1707,8 +1735,14 @@ export const AiConfig: React.FC<AiConfigProps> = ({
 }) => {
   // MCP is not supported in WASM
   const wasm = isWasm();
+  const [activeTab, setActiveTab] = useAtom(aiSettingsSubTabAtom);
+
   return (
-    <Tabs defaultValue="ai-features" className="flex-1">
+    <Tabs
+      value={activeTab}
+      onValueChange={(value) => setActiveTab(value as AiSettingsSubTab)}
+      className="flex-1"
+    >
       <TabsList className="mb-2">
         <TabsTrigger value="ai-features">AI Features</TabsTrigger>
         <TabsTrigger value="ai-providers">AI Providers</TabsTrigger>

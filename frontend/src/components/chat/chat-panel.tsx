@@ -262,7 +262,7 @@ const ChatInputFooter: React.FC<ChatInputFooterProps> = memo(
 
     return (
       <TooltipProvider>
-        <div className="px-3 py-2 border-t border-border/20 flex flex-row items-center justify-between">
+        <div className="px-3 py-2 border-t border-border/20 flex flex-row flex-wrap items-center justify-between gap-1">
           <div className="flex items-center gap-2">
             <FeatureFlagged feature="chat_modes">
               <Select value={currentMode} onValueChange={saveModeChange}>
@@ -426,16 +426,20 @@ const ChatInput: React.FC<ChatInputProps> = memo(
 ChatInput.displayName = "ChatInput";
 
 const ChatPanel = () => {
-  const aiEnabled = useAtomValue(aiEnabledAtom);
+  const aiConfigured = useAtomValue(aiEnabledAtom);
   const { handleClick } = useOpenSettingsToTab();
 
-  if (!aiEnabled) {
+  if (!aiConfigured) {
     return (
       <PanelEmptyState
         title="Chat with AI"
-        description="AI is currently disabled. Add your API key to enable."
+        description="No AI provider configured or Chat model not selected"
         action={
-          <Button variant="outline" size="sm" onClick={() => handleClick("ai")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleClick("ai", "ai-providers")}
+          >
             Edit AI settings
           </Button>
         }
